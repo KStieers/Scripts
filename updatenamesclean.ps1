@@ -1,22 +1,16 @@
 
 #base constants, base uri (incase it ever changes...)
 $baseuri = "https://dhxxxx-esa1.iphmx.com/esa/api/v2.0/"  
-$clientid = "username"		#username
-$apikey = "password"		#password
-
-
-#name of dictionary in ESA 
+$clientid = "username"
+$apikey = "password"
 $dictionary = "Names"
+$sqlserver = "SQLServer"
 
-#convert the login info to the form needed by the api "clientid:apikey", then base64 encoded
-$EncodedUsernamePassword = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($('{0}:{1}' -f $clientid, $apikey)))
-
-#build headers
-$Headers = @{'Authorization' = "Basic $($EncodedUsernamePassword)"; 'accept' = '*/*'; 'Content-type' = 'application/json'; 'Accept-Encoding' = 'gzip, deflate'}
-
-write-host "Calling SQL..."
-$ds=Invoke-Sqlcmd -ServerInstance "sql7" -TrustServerCertificate -as Dataset -Query "SELECT [FirstName]+' '+Replace(Replace([LastName],'-',' '),'''',' ') as name
-  FROM [employeedatabase].[dbo].[employeetable]
+#This sql query dumps out 'first last', in a column called 'name'
+#the unions at the bottom are for service accounts you want to catch or 'other names' that are too differnet for the FED filter to catch. 
+#This script requires that the user running it have the rights to connect to the sql server and the appropriate Powershell modules loaded.
+$query = "SELECT [FirstName]+' '+Replace(Replace([LastName],'-',' '),'''',' ') as name
+  FROM [EmployeeDB].[dbo].[EmployeeTable]
   where isactive = 1 and firstname not like '%test%' and lastname not like '%test%' and companyid in (38,41,42,43) and
   (Position like '%President%' or
 position like '%accountant%' or
@@ -29,15 +23,26 @@ position like '%Chariman%' or DepartmentID in (3,6,7))
 Union 
 select 'Jobs' as name
 Union
+select 'OpusCareers' as name
+Union
 select 'Careers' as name
 Union
 Select 'Human Resources' as name
-
 order by name"
+
+
+#convert the login info to the form needed by the api "clientid:apikey", then base64 encoded
+$EncodedUsernamePassword = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($('{0}:{1}' -f $clientid, $apikey)))
+
+#build headers
+$Headers = @{'Authorization' = "Basic $($EncodedUsernamePassword)"; 'accept' = '*/*'; 'Content-type' = 'application/json'; 'Accept-Encoding' = 'gzip, deflate'}
+
+write-host "Calling SQL..."
+$ds=Invoke-Sqlcmd -ServerInstance $sqlserver -TrustServerCertificate -as Dataset -Query $query
 
 $list=$DS.Tables[0] | select $DS.Tables[0].Columns[0].Rows
 [string[]]$onetlist =@()
-$onetlist = $list.name    # .name is the name of the column from the SQL query above. 
+$onetlist = $list.name   # .name is the name of the column from the SQL query above.  
 
 Write-host "Getting names from ESA..."
 #get all the Names from the dictionary
@@ -72,8 +77,11 @@ for ( $index = 0; $index -lt $esalist.count; $index++ )
     $esalist[$index] = $($esalist[$index]).Replace(' 1','')
 }
 
+#uses a feature of powershell with 2 arrays, it will do outer joins
 Write-host "Building lists..."
+#names in ESA, but not in the query 
 [string[]]$removefromESA = $esalist | Where {$onetlist -notcontains $_}
+#names in the query, but not the ESA
 [string[]]$AddtoESA = $onetlist | Where {$esalist -notcontains $_}
 
 
